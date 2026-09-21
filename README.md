@@ -86,6 +86,8 @@ pip install "xla-bridge[dev]"
 
 Tested pairing: **torch 2.8.0 + torch_xla 2.8.0 on TPU v5e-8**. torch_xla 2.9 has an unrelated `std::bad_alloc` in `from_pretrained` on v5e and is not yet supported.
 
+**Status note on validation.** The logic in this library was originally validated on a TPU v5e-8 in inline form (inside another codebase). The packaged, refactored API you see here has NOT yet been re-verified on TPU hardware; verify on an actual TPU VM before trusting any claim from this README in a production run. Known-verified so far: import safety and no-op behavior on non-TPU hosts.
+
 ## Relationship to other projects
 
 - **`optimum-tpu`** (archived): covered Trainer-based training and TGI serving. `xla-bridge` is not a fork; it serves the eager-inference/model-surgery niche that was left open.
