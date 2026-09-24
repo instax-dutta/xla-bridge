@@ -25,7 +25,8 @@ import torch
 from torch import nn
 from transformers import PreTrainedModel
 
-from .detection import detect_tpu, get_xla_device_count, is_torch_xla_available
+from .detection import detect_tpu, is_torch_xla_available
+from .device import get_xla_device_count
 
 
 def fsdp_uses_spmd() -> bool:
