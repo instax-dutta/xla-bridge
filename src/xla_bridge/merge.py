@@ -95,6 +95,9 @@ def merge_peft_model_on_cpu(
 
     adapter_state = materialize_adapter_state(model)
     peft_config = model.peft_config
+    # PeftModel.peft_config is a dict {adapter_name: config}; take the active one.
+    if isinstance(peft_config, dict):
+        peft_config = peft_config.get("default") or next(iter(peft_config.values()))
 
     base_model = reload_base()
     from peft import get_peft_model
