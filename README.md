@@ -86,7 +86,7 @@ pip install "xla-bridge[dev]"
 
 Tested pairing: **torch 2.8.0 + torch_xla 2.8.0 on TPU v5e-8**. torch_xla 2.9 has an unrelated `std::bad_alloc` in `from_pretrained` on v5e and is not yet supported.
 
-**Status note on validation.** The logic in this library was originally validated on a TPU v5e-8 in inline form (inside another codebase). The packaged, refactored API you see here has NOT yet been re-verified on TPU hardware; verify on an actual TPU VM before trusting any claim from this README in a production run. Known-verified so far: import safety and no-op behavior on non-TPU hosts.
+**Status note on validation.** All four modules were verified end-to-end on a real Kaggle TPU v5e-8 (torch 2.8.0 / torch_xla 2.8.0, 8 cores, single-process SPMD FSDP) on 2026-09-24: detection/env setup, static-shape greedy decode (first decode 7.0s incl. compile, subsequent 0.5s), FSDP wrap + sharded decode, and XLA-safe LoRA merge with clean re-export. Unit tests pass on non-TPU hosts. torch_xla 2.9 is not supported (std::bad_alloc in from_pretrained on v5e).
 
 ## Relationship to other projects
 

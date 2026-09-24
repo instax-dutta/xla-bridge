@@ -14,20 +14,21 @@ import sys
 
 
 def test_package_imports_without_torch_xla():
-    # This test machine has torch but no torch_xla; importing must not raise.
+    # Importing must not raise, on any machine (with or without torch_xla).
     from xla_bridge import detection, environment
 
-    assert detection.is_torch_xla_available() is False
-    assert detection.detect_tpu() is False
-    assert detection.get_tpu_core_count_from_env() == 1
-
-    # Env setup is idempotent and safe anywhere.
     environment.setup_tpu_environment(enable_spmd=True)
     environment.setup_tpu_environment(enable_spmd=True)
     import os
 
     assert os.environ.get("PJRT_DEVICE") == "TPU"
     assert os.environ.get("XLA_USE_SPMD") == "1"
+
+    # Core count from env vars is topology math, safe everywhere.
+    assert detection.get_tpu_core_count_from_env() >= 1
+
+    if not detection.is_torch_xla_available():
+        assert detection.detect_tpu() is False
 
 
 def test_imports_bare_interpreter():
