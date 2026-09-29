@@ -83,8 +83,15 @@ def greedy_decode(
 
     Returns:
         (full_ids, finished): the (batch, prompt_len + max_new_tokens) id
-        buffer including prompts, and a (batch,) bool tensor marking which
-        sequences hit EOS.
+        buffer and a (batch,) bool tensor marking which sequences hit EOS.
+        The last `max_new_tokens` columns hold the generated tokens; earlier
+        columns hold the tail of the prompt that has not yet slid out of the
+        window.
+
+    Note: the prompt is right-aligned inside the buffer so the loop always
+    reads the newest token. This is a full re-forward per step (no KV cache),
+    so long generations cost O(window) compute per token - intended for
+    short fixed-length generations where HBM, not FLOPs, is the constraint.
     """
     import torch
 
@@ -114,12 +121,18 @@ def _greedy_decode_impl(
     total_len = prompt_len + max_new_tokens
 
     # Pre-allocate fixed-size buffers. Shape NEVER changes.
+    #
+    # The prompt is placed so that it ENDS at the last column: the loop reads
+    # logits at the final column, so that column must always hold the most
+    # recent token. Left-aligning the prompt inside a wider buffer (the naive
+    # layout) makes step 0 predict from unwritten zero-token columns and
+    # silently changes the first generated token.
     full_ids = torch.zeros(batch_size, total_len, device=device, dtype=input_ids.dtype)
-    full_ids[:, :prompt_len] = input_ids
+    full_ids[:, -prompt_len:] = input_ids
     full_mask = torch.zeros(
         batch_size, total_len, device=device, dtype=attention_mask.dtype
     )
-    full_mask[:, :prompt_len] = attention_mask
+    full_mask[:, -prompt_len:] = attention_mask
 
     finished = torch.zeros(batch_size, device=device, dtype=torch.bool)
     eos_tensor = (
