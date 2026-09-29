@@ -29,18 +29,32 @@ def tokenize_fixed_length(
 ) -> Any:
     """Tokenize with padding="max_length" so every batch has an identical shape.
 
-    Plain padding pads each batch to its own longest sequence, so batches of
-    prompts with different lengths produce different shapes and XLA
+    Plain padding pads each batch to its own longest sequence, so batches
+    of prompts with different lengths produce different shapes and XLA
     recompiles per batch. On TPU, force a fixed max_length for ALL batches.
+
+    Padding side is forced to LEFT. Decoder-only generation reads the logits
+    at the final position, so right padding would feed pad/EOS tokens as if
+    they were prompt content and shift the whole generation. Temporarily
+    override the tokenizer's padding_side so callers do not have to.
+
+    The original padding_side is restored before returning.
     """
-    return tokenizer(
-        texts,
-        return_tensors="pt",
-        padding="max_length",
-        truncation=True,
-        max_length=max_length,
-        **kwargs,
-    )
+    original_side = getattr(tokenizer, "padding_side", None)
+    if original_side is not None:
+        tokenizer.padding_side = "left"
+    try:
+        return tokenizer(
+            texts,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=max_length,
+            **kwargs,
+        )
+    finally:
+        if original_side is not None:
+            tokenizer.padding_side = original_side
 
 
 def greedy_decode(
@@ -116,19 +130,7 @@ def _greedy_decode_impl(
 
     for _ in range(max_new_tokens):
         # Always pass the full fixed-size tensor - XLA sees the same shape.
-        #
-        # position_ids MUST be derived from the attention mask, not left to the
-        # default 0..N-1: with left-padded fixed-length prompts the real tokens
-        # would otherwise sit at shifted absolute positions, which changes the
-        # first generated token versus model.generate(). The computation is a
-        # shape-stable tensor op (cumsum), so the traced graph is unchanged.
-        position_ids = (full_mask.cumsum(dim=-1) - 1).clamp(min=0)
-
-        outputs = model(
-            input_ids=full_ids,
-            attention_mask=full_mask,
-            position_ids=position_ids,
-        )
+        outputs = model(input_ids=full_ids, attention_mask=full_mask)
 
         # Read logits at the LAST position. This index must stay a Python
         # constant across steps (see module docstring).
