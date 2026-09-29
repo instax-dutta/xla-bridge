@@ -47,6 +47,7 @@ from xla_bridge import (
     setup_tpu_environment,
     get_xla_device,
     greedy_decode,
+    tokenize_fixed_length,
 )
 
 if not detect_tpu():
@@ -62,8 +63,18 @@ tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
 
 model.eval()  # HLO stability - see failure mode 3
 
-inputs = tokenizer(["Hello, my name is"], return_tensors="pt").to(device)
-ids, mask = greedy_decode(
+# Fixed-width left-padded window. Make the window comfortably wider than the
+# longest prompt: the loop keeps only the most recent `window` tokens, so a
+# tight window drops early prompt tokens that `model.generate()` would retain.
+window = 128
+prompt = tokenizer.apply_chat_template(
+    [{"role": "user", "content": "Hello, my name is"}],
+    tokenize=False,
+    add_generation_prompt=True,
+)
+inputs = tokenize_fixed_length(tokenizer, [prompt], max_length=window).to(device)
+
+ids, finished = greedy_decode(
     model,
     inputs["input_ids"],
     inputs["attention_mask"],
@@ -71,8 +82,13 @@ ids, mask = greedy_decode(
     eos_token_id=tokenizer.eos_token_id,
     pad_token_id=tokenizer.eos_token_id,
 )
-print(tokenizer.batch_decode(ids, skip_special_tokens=True))
+generated = ids[:, -64:]
+print(tokenizer.batch_decode(generated, skip_special_tokens=True))
 ```
+
+`greedy_decode` re-runs the full window each step instead of using a KV cache: that
+trade is what keeps every shape static, so XLA compiles the loop once. It is intended
+for short, fixed-length generations where HBM - not FLOPs - is the binding constraint.
 
 ## Installation
 
@@ -86,7 +102,12 @@ pip install "xla-bridge[dev]"
 
 Tested pairing: **torch 2.8.0 + torch_xla 2.8.0 on TPU v5e-8**. torch_xla 2.9 has an unrelated `std::bad_alloc` in `from_pretrained` on v5e and is not yet supported.
 
-**Status note on validation.** All four modules were verified end-to-end on a real Kaggle TPU v5e-8 (torch 2.8.0 / torch_xla 2.8.0, 8 cores, single-process SPMD FSDP) on 2026-09-24: detection/env setup, static-shape greedy decode (first decode 7.0s incl. compile, subsequent 0.5s), FSDP wrap + sharded decode, and XLA-safe LoRA merge with clean re-export. Unit tests pass on non-TPU hosts. torch_xla 2.9 is not supported (std::bad_alloc in from_pretrained on v5e).
+**Status note on validation.** All four modules were verified end-to-end on real TPU hardware:
+
+- **Kaggle TPU v5e-8** (torch 2.8.0 / torch_xla 2.8.0, 8 cores, single-process SPMD FSDP), 2026-09-24: detection/env setup, static-shape greedy decode (first decode 7.0s incl. compile, subsequent 0.5s), FSDP wrap + sharded decode, XLA-safe LoRA merge with clean re-export, plus heretic's own 10/10 smoke suite and a 1-trial end-to-end abliteration with export.
+- **Google Colab TPU v5e-1** (torch 2.9.0 / torch_xla 2.9.0, single chip), 2026-09-29: all modules verified again on a different substrate, and `greedy_decode` was checked **token-for-token against `model.generate()`** - exact match over 8 generated tokens when the sliding window is wider than the prompt. This run also found and fixed a real bug: the prompt must be right-aligned in the buffer, otherwise the first token is predicted from unwritten columns (see `decode.py`).
+
+torch_xla 2.9 works on Colab v5e-1; it failed with `std::bad_alloc` in `from_pretrained` on the Kaggle v5e-8 image, so 2.8.x remains the pairing for multi-chip v5e-8.
 
 ## Relationship to other projects
 
