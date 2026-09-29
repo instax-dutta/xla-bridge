@@ -116,7 +116,19 @@ def _greedy_decode_impl(
 
     for _ in range(max_new_tokens):
         # Always pass the full fixed-size tensor - XLA sees the same shape.
-        outputs = model(input_ids=full_ids, attention_mask=full_mask)
+        #
+        # position_ids MUST be derived from the attention mask, not left to the
+        # default 0..N-1: with left-padded fixed-length prompts the real tokens
+        # would otherwise sit at shifted absolute positions, which changes the
+        # first generated token versus model.generate(). The computation is a
+        # shape-stable tensor op (cumsum), so the traced graph is unchanged.
+        position_ids = (full_mask.cumsum(dim=-1) - 1).clamp(min=0)
+
+        outputs = model(
+            input_ids=full_ids,
+            attention_mask=full_mask,
+            position_ids=position_ids,
+        )
 
         # Read logits at the LAST position. This index must stay a Python
         # constant across steps (see module docstring).
